@@ -1,0 +1,26 @@
+[project]
+name = "fronius-primo-exporter"
+version = "0.1.0"
+description = "Prometheus exporter for Fronius solar inverters (Primo / Solar API)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "prometheus-client>=0.20",
+    "requests>=2.28",
+]
+
+[project.scripts]
+fronius-primo-exporter = "main:main"
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

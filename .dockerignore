@@ -1,0 +1,8 @@
+.venv
+.git
+.github
+tests
+*.md
+.python-version
+
+.coverage
