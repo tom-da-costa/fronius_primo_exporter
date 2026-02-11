@@ -77,8 +77,8 @@ class FroniusCollector:
         self, p: str, site: dict[str, Any], inverters: dict[str, Any]
     ) -> Iterator[Metric]:
         gf = GaugeMetricFamily(
-            p + "site_power_photovoltaic_watts",
-            "Puissance PV site (W)",
+            p + "site_power_photovoltaic",
+            "Power flow of the site photovoltaic in Watt",
             labels=[],
         )
         gf.add_metric([], safe_float(site.get("P_PV")))
@@ -86,15 +86,15 @@ class FroniusCollector:
 
         for name, key, help_suffix in (
             (
-                "site_power_grid_watts",
+                "site_power_grid",
                 "P_Grid",
-                "Puissance réseau (W), positif = export",
+                "Site power supplied to or provided from the grid in Watt",
             ),
-            ("site_power_load_watts", "P_Load", "Puissance charge site (W)"),
+            ("site_power_load", "P_Load", "Site power load in Watt"),
             (
-                "site_power_accu_watts",
+                "site_power_accu",
                 "P_Akku",
-                "Puissance accumulateur (W) si présent",
+                "Site power supplied to or provided from the accumulator(s) in Watt",
             ),
             ("site_energy_day_wh", "E_Day", "Énergie du jour (Wh)"),
             ("site_energy_year_wh", "E_Year", "Énergie de l'année (Wh)"),
@@ -124,15 +124,25 @@ class FroniusCollector:
         )
         yield g
 
+        energy_consumption = GaugeMetricFamily(
+            p + "site_energy_consumption",
+            "Energy consumption in kWh",
+            labels=["time_frame"],
+        )
+        energy_consumption.add_metric(["day"], safe_float(site.get("E_Day")))
+        energy_consumption.add_metric(["year"], safe_float(site.get("E_Year")))
+        energy_consumption.add_metric(["total"], safe_float(site.get("E_Total")))
+        yield energy_consumption
+
         inv_power = GaugeMetricFamily(
-            p + "inverter_power_watts",
-            "Puissance AC de l'onduleur (W)",
-            labels=["inverter_id"],
+            p + "inverter_power",
+            "Power flow of the inverter in Watt",
+            labels=["inverter"],
         )
         inv_soc = GaugeMetricFamily(
-            p + "inverter_soc_ratio",
-            "State of charge batterie (0–1) si présente",
-            labels=["inverter_id"],
+            p + "inverter_soc",
+            "State of charge of the battery attached to the inverter in percent",
+            labels=["inverter"],
         )
         for inv_id, inv_data in inverters.items():
             if isinstance(inv_data, dict):
@@ -148,7 +158,7 @@ class FroniusCollector:
         self, p: str, data: dict[str, Any]
     ) -> Iterator[Metric]:
         key_to_metric = [
-            ("PAC", p + "inverter_ac_power_watts", "Puissance AC (W)", "device_id"),
+            ("PAC", p + "inverter_ac_power", "Puissance AC (W)", "device_id"),
             ("FAC", p + "inverter_ac_frequency_hz", "Fréquence AC (Hz)", "device_id"),
             (
                 "DAY_ENERGY",
@@ -178,13 +188,27 @@ class FroniusCollector:
                 g.add_metric([str(device_id)], safe_float(val))
             yield g
 
+        # Site-level AC frequency (single gauge, first device value)
+        fac_obj = data.get("FAC")
+        ac_freq = GaugeMetricFamily(
+            p + "site_realtime_data_ac_frequency",
+            "Site real time data AC frequency in Hz",
+        )
+        fac_val = 0.0
+        if fac_obj and isinstance(fac_obj, dict):
+            values = fac_obj.get("Values") or {}
+            if values:
+                fac_val = safe_float(next(iter(values.values())))
+        ac_freq.add_metric([], fac_val)
+        yield ac_freq
+
         idc_fam = GaugeMetricFamily(
-            p + "inverter_dc_current_amps",
+            p + "inverter_dc_current",
             "Courant DC MPPT (A)",
             labels=["device_id", "mppt"],
         )
         udc_fam = GaugeMetricFamily(
-            p + "inverter_dc_voltage_volts",
+            p + "inverter_dc_voltage",
             "Tension DC MPPT (V)",
             labels=["device_id", "mppt"],
         )
@@ -204,6 +228,37 @@ class FroniusCollector:
                         fam.add_metric([str(device_id), str(i)], safe_float(val))
         yield idc_fam
         yield udc_fam
+
+        # Old-style MPPT metrics with {inverter, mppt} labels
+        mppt_current = GaugeMetricFamily(
+            p + "site_mppt_current_dc",
+            "Site mppt current DC in A",
+            labels=["inverter", "mppt"],
+        )
+        mppt_voltage = GaugeMetricFamily(
+            p + "site_mppt_voltage",
+            "Site mppt voltage in V",
+            labels=["inverter", "mppt"],
+        )
+        for key, fam, mppt_label in (
+            ("IDC", mppt_current, "1"),
+            ("UDC", mppt_voltage, "1"),
+        ):
+            obj = data.get(key)
+            if obj and isinstance(obj, dict):
+                for device_id, val in (obj.get("Values") or {}).items():
+                    fam.add_metric([str(device_id), mppt_label], safe_float(val))
+        for i in range(1, 5):
+            for key, fam in (
+                (f"IDC_{i}", mppt_current),
+                (f"UDC_{i}", mppt_voltage),
+            ):
+                obj = data.get(key)
+                if obj and isinstance(obj, dict):
+                    for device_id, val in (obj.get("Values") or {}).items():
+                        fam.add_metric([str(device_id), str(i)], safe_float(val))
+        yield mppt_current
+        yield mppt_voltage
 
     def _meter_families(self, p: str, data: dict[str, Any]) -> Iterator[Metric]:
         produced = GaugeMetricFamily(
