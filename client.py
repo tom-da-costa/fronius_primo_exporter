@@ -70,7 +70,9 @@ class FroniusClient:
                 f"{BASE_PATH}/GetInverterRealtimeData.cgi?Scope=Device&DeviceId={device_id}"
             )
         except FroniusClientError as e:
-            logger.warning("Inverter realtime (device %s) unreachable: %s", device_id, e)
+            logger.warning(
+                "Inverter realtime (device %s) unreachable: %s", device_id, e
+            )
             return None
 
     def get_meter_realtime_system(self) -> dict[str, Any] | None:

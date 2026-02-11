@@ -13,7 +13,9 @@ def _make_collector(pf=None, inv=None, meter=None, dev_returns=None):
     client.get_inverter_realtime_system.return_value = inv
     client.get_meter_realtime_system.return_value = meter
     if dev_returns:
-        client.get_inverter_realtime_device.side_effect = lambda did: dev_returns.get(did)
+        client.get_inverter_realtime_device.side_effect = lambda did: dev_returns.get(
+            did
+        )
     else:
         client.get_inverter_realtime_device.return_value = None
     return FroniusCollector(client, prefix="fronius_")

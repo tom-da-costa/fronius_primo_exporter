@@ -44,7 +44,8 @@ class FroniusCollector:
         inverter_ids: list[str] = []
         if pf:
             inverter_ids = [
-                str(k) for k, v in (pf.get("Inverters") or {}).items()
+                str(k)
+                for k, v in (pf.get("Inverters") or {}).items()
                 if isinstance(v, dict)
             ]
         inv_devices: dict[str, dict[str, Any]] = {}
