@@ -39,6 +39,7 @@ class FroniusCollector:
         pf = self._client.get_power_flow()
         inv = self._client.get_inverter_realtime_system()
         meter = self._client.get_meter_realtime_system()
+        archive = self._client.get_archive_data()
 
         # Discover inverter IDs from PowerFlow and fetch per-device data
         inverter_ids: list[str] = []
@@ -84,6 +85,8 @@ class FroniusCollector:
             yield from self._power_flow_families(p, site, invs)
         if inv:
             yield from self._inverter_realtime_families(p, inv, inv_devices)
+        if archive:
+            yield from self._archive_families(p, archive)
         if meter:
             yield from self._meter_families(p, meter)
 
@@ -232,6 +235,28 @@ class FroniusCollector:
             "Tension DC MPPT (V)",
             labels=["device_id", "mppt"],
         )
+
+        for dev_id, dev_data in devices.items():
+            # MPPT 1 (IDC / UDC)
+            for key, fam in (("IDC", idc_fam), ("UDC", udc_fam)):
+                v = dev_data.get(key)
+                if v is not None:
+                    fam.add_metric([dev_id, "1"], safe_float(v))
+            # MPPT 2..4 (IDC_2 / UDC_2, etc.)
+            for i in range(2, 5):
+                for key, fam in (
+                    (f"IDC_{i}", idc_fam),
+                    (f"UDC_{i}", udc_fam),
+                ):
+                    v = dev_data.get(key)
+                    if v is not None:
+                        fam.add_metric([dev_id, str(i)], safe_float(v))
+
+        yield idc_fam
+        yield udc_fam
+
+    def _archive_families(self, p: str, data: dict[str, Any]) -> Iterator[Metric]:
+        """Parse GetArchiveData response for per-string current/voltage."""
         mppt_current = GaugeMetricFamily(
             p + "site_mppt_current_dc",
             "Site mppt current DC in A",
@@ -242,32 +267,31 @@ class FroniusCollector:
             "Site mppt voltage in V",
             labels=["inverter", "mppt"],
         )
-
-        for dev_id, dev_data in devices.items():
-            # MPPT 1 (IDC / UDC)
-            for key, fam, old_fam in (
-                ("IDC", idc_fam, mppt_current),
-                ("UDC", udc_fam, mppt_voltage),
+        for raw_key, inverter_data in data.items():
+            if not isinstance(inverter_data, dict):
+                continue
+            inv_id = raw_key.removeprefix("inverter/")
+            channels = inverter_data.get("Data") or {}
+            for mppt_idx, cur_key, vol_key in (
+                ("1", "Current_DC_String_1", "Voltage_DC_String_1"),
+                ("2", "Current_DC_String_2", "Voltage_DC_String_2"),
             ):
-                v = dev_data.get(key)
-                if v is not None:
-                    val = safe_float(v)
-                    fam.add_metric([dev_id, "1"], val)
-                    old_fam.add_metric([dev_id, "1"], val)
-            # MPPT 2..4 (IDC_2 / UDC_2, etc.)
-            for i in range(2, 5):
-                for key, fam, old_fam in (
-                    (f"IDC_{i}", idc_fam, mppt_current),
-                    (f"UDC_{i}", udc_fam, mppt_voltage),
-                ):
-                    v = dev_data.get(key)
-                    if v is not None:
-                        val = safe_float(v)
-                        fam.add_metric([dev_id, str(i)], val)
-                        old_fam.add_metric([dev_id, str(i)], val)
-
-        yield idc_fam
-        yield udc_fam
+                cur_ch = channels.get(cur_key)
+                if cur_ch and isinstance(cur_ch, dict):
+                    vals = cur_ch.get("Values") or {}
+                    if vals:
+                        mppt_current.add_metric(
+                            [inv_id, mppt_idx],
+                            safe_float(next(iter(vals.values()))),
+                        )
+                vol_ch = channels.get(vol_key)
+                if vol_ch and isinstance(vol_ch, dict):
+                    vals = vol_ch.get("Values") or {}
+                    if vals:
+                        mppt_voltage.add_metric(
+                            [inv_id, mppt_idx],
+                            safe_float(next(iter(vals.values()))),
+                        )
         yield mppt_current
         yield mppt_voltage
 

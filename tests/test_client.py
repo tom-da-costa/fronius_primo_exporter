@@ -120,3 +120,24 @@ def test_get_inverter_realtime_device_returns_none_on_error():
     with patch.object(c, "_body_data", side_effect=FroniusClientError("fail")):
         result = c.get_inverter_realtime_device(1)
     assert result is None
+
+
+def test_get_archive_data_success():
+    c = FroniusClient(base_url="http://host", timeout=1.0)
+    expected = {
+        "inverter/1": {
+            "Data": {
+                "Current_DC_String_1": {"Unit": "A", "Values": {"0": 13.0}},
+            }
+        }
+    }
+    with patch.object(c, "_body_data", return_value=expected):
+        result = c.get_archive_data()
+    assert result == expected
+
+
+def test_get_archive_data_returns_none_on_error():
+    c = FroniusClient(base_url="http://host", timeout=1.0)
+    with patch.object(c, "_body_data", side_effect=FroniusClientError("fail")):
+        result = c.get_archive_data()
+    assert result is None

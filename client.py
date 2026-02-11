@@ -1,6 +1,7 @@
 """Client pour la Fronius Solar API (v1)."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -67,12 +68,37 @@ class FroniusClient:
         """GetInverterRealtimeData.cgi?Scope=Device — données par onduleur (IDC, UDC, FAC…)."""
         try:
             return self._body_data(
-                f"{BASE_PATH}/GetInverterRealtimeData.cgi?Scope=Device&DeviceId={device_id}"
+                f"{BASE_PATH}/GetInverterRealtimeData.cgi"
+                f"?Scope=Device&DeviceId={device_id}"
+                f"&DataCollection=CommonInverterData"
             )
         except FroniusClientError as e:
             logger.warning(
                 "Inverter realtime (device %s) unreachable: %s", device_id, e
             )
+            return None
+
+    def get_archive_data(self) -> dict[str, Any] | None:
+        """GetArchiveData.cgi — données archive (Current/Voltage DC String par onduleur)."""
+        now = datetime.now(tz=timezone.utc)
+        # Round down to 5-minute boundary
+        truncated = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
+        start = truncated.strftime("%Y-%m-%dT%H:%M:%S%z")
+        end_dt = truncated.replace(minute=truncated.minute + 5)
+        end = end_dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+        try:
+            return self._body_data(
+                f"{BASE_PATH}/GetArchiveData.cgi?Scope=System"
+                f"&Channel=Voltage_DC_String_1"
+                f"&Channel=Current_DC_String_1"
+                f"&Channel=Voltage_DC_String_2"
+                f"&Channel=Current_DC_String_2"
+                f"&HumanReadable=false"
+                f"&StartDate={start}"
+                f"&EndDate={end}"
+            )
+        except FroniusClientError as e:
+            logger.warning("Archive data unreachable: %s", e)
             return None
 
     def get_meter_realtime_system(self) -> dict[str, Any] | None:

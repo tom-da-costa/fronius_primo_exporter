@@ -3,15 +3,17 @@ from unittest.mock import MagicMock
 from collector import FroniusCollector
 
 
-def _make_collector(pf=None, inv=None, meter=None, dev_returns=None):
+def _make_collector(pf=None, inv=None, meter=None, dev_returns=None, archive=None):
     """Helper: create a FroniusCollector with mocked client.
 
     dev_returns: dict mapping device_id (int) -> device-level response dict.
+    archive: dict simulating GetArchiveData response.
     """
     client = MagicMock()
     client.get_power_flow.return_value = pf
     client.get_inverter_realtime_system.return_value = inv
     client.get_meter_realtime_system.return_value = meter
+    client.get_archive_data.return_value = archive
     if dev_returns:
         client.get_inverter_realtime_device.side_effect = lambda did: dev_returns.get(
             did
@@ -107,11 +109,11 @@ def test_inverter_realtime_families():
         },
         dev_returns={
             1: {
-                "FAC": 50.01,
-                "IDC": 5.2,
-                "UDC": 320.5,
-                "IDC_2": 4.8,
-                "UDC_2": 310.0,
+                "FAC": {"Unit": "Hz", "Value": 50.01},
+                "IDC": {"Unit": "A", "Value": 5.2},
+                "UDC": {"Unit": "V", "Value": 320.5},
+                "IDC_2": {"Unit": "A", "Value": 4.8},
+                "UDC_2": {"Unit": "V", "Value": 310.0},
             }
         },
     )
@@ -124,8 +126,6 @@ def test_inverter_realtime_families():
         "fronius_inverter_dc_current",
         "fronius_inverter_dc_voltage",
         "fronius_site_realtime_data_ac_frequency",
-        "fronius_site_mppt_current_dc",
-        "fronius_site_mppt_voltage",
     ):
         assert expected in names, f"{expected} missing"
 
@@ -137,7 +137,7 @@ def test_site_ac_frequency_value():
             "Inverters": {"1": {"P": 100}},
         },
         inv={"PAC": {"Values": {"1": 100}}},
-        dev_returns={1: {"FAC": 49.98}},
+        dev_returns={1: {"FAC": {"Unit": "Hz", "Value": 49.98}}},
     )
     metrics = list(collector.collect())
     freq = [m for m in metrics if m.name == "fronius_site_realtime_data_ac_frequency"]
@@ -155,7 +155,7 @@ def test_site_ac_frequency_zero_when_absent():
     assert freq[0].samples[0].value == 0.0
 
 
-def test_mppt_labels():
+def test_device_dc_current_voltage():
     collector = _make_collector(
         pf={
             "Site": {"P_PV": 100},
@@ -164,12 +164,38 @@ def test_mppt_labels():
         inv={"PAC": {"Values": {"1": 100}}},
         dev_returns={
             1: {
-                "IDC": 5.0,
-                "UDC": 300.0,
-                "IDC_2": 4.0,
-                "UDC_2": 290.0,
+                "IDC": {"Unit": "A", "Value": 5.0},
+                "UDC": {"Unit": "V", "Value": 300.0},
+                "IDC_2": {"Unit": "A", "Value": 4.0},
+                "UDC_2": {"Unit": "V", "Value": 290.0},
             }
         },
+    )
+    metrics = list(collector.collect())
+
+    dc_i = [m for m in metrics if m.name == "fronius_inverter_dc_current"]
+    assert len(dc_i) == 1
+    dc_labels = {(s.labels["device_id"], s.labels["mppt"]) for s in dc_i[0].samples}
+    assert ("1", "1") in dc_labels
+    assert ("1", "2") in dc_labels
+
+    dc_v = [m for m in metrics if m.name == "fronius_inverter_dc_voltage"]
+    assert len(dc_v) == 1
+    assert dc_v[0].samples[0].value == 300.0
+
+
+def test_archive_mppt_labels():
+    collector = _make_collector(
+        archive={
+            "inverter/1": {
+                "Data": {
+                    "Current_DC_String_1": {"Unit": "A", "Values": {"0": 13.0}},
+                    "Current_DC_String_2": {"Unit": "A", "Values": {"0": 15.92}},
+                    "Voltage_DC_String_1": {"Unit": "V", "Values": {"0": 425.6}},
+                    "Voltage_DC_String_2": {"Unit": "V", "Values": {"0": 408.9}},
+                }
+            }
+        }
     )
     metrics = list(collector.collect())
 
@@ -178,12 +204,22 @@ def test_mppt_labels():
     labels_set = {(s.labels["inverter"], s.labels["mppt"]) for s in mppt_i[0].samples}
     assert ("1", "1") in labels_set
     assert ("1", "2") in labels_set
+    vals = {s.labels["mppt"]: s.value for s in mppt_i[0].samples}
+    assert vals["1"] == 13.0
+    assert vals["2"] == 15.92
 
-    dc_i = [m for m in metrics if m.name == "fronius_inverter_dc_current"]
-    assert len(dc_i) == 1
-    dc_labels = {(s.labels["device_id"], s.labels["mppt"]) for s in dc_i[0].samples}
-    assert ("1", "1") in dc_labels
-    assert ("1", "2") in dc_labels
+    mppt_v = [m for m in metrics if m.name == "fronius_site_mppt_voltage"]
+    assert len(mppt_v) == 1
+    v_vals = {s.labels["mppt"]: s.value for s in mppt_v[0].samples}
+    assert v_vals["1"] == 425.6
+    assert v_vals["2"] == 408.9
+
+
+def test_archive_none_still_works():
+    """When archive returns None, site_mppt metrics are not emitted."""
+    collector = _make_collector(archive=None)
+    names = _collect_names(collector)
+    assert "fronius_site_mppt_current_dc" not in names
 
 
 def test_meter_families():
@@ -239,8 +275,8 @@ def test_prefix_without_trailing_underscore():
     assert collector._prefix == "test_"
 
 
-def test_device_unreachable_still_yields_empty_mppt():
-    """When device-level call returns None, MPPT metrics are emitted but empty."""
+def test_device_unreachable_still_yields_empty_dc():
+    """When device-level call returns None, DC metrics are emitted but empty."""
     collector = _make_collector(
         pf={
             "Site": {"P_PV": 100},
