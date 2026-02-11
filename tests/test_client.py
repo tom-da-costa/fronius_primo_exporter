@@ -105,3 +105,18 @@ def test_get_meter_realtime_system_returns_none_on_error():
     with patch.object(c, "_body_data", side_effect=FroniusClientError("fail")):
         result = c.get_meter_realtime_system()
     assert result is None
+
+
+def test_get_inverter_realtime_device_success():
+    c = FroniusClient(base_url="http://host", timeout=1.0)
+    expected = {"FAC": 50.0, "IDC": 5.0, "UDC": 320.0}
+    with patch.object(c, "_body_data", return_value=expected):
+        result = c.get_inverter_realtime_device(1)
+    assert result == expected
+
+
+def test_get_inverter_realtime_device_returns_none_on_error():
+    c = FroniusClient(base_url="http://host", timeout=1.0)
+    with patch.object(c, "_body_data", side_effect=FroniusClientError("fail")):
+        result = c.get_inverter_realtime_device(1)
+    assert result is None

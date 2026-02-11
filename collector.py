@@ -40,6 +40,19 @@ class FroniusCollector:
         inv = self._client.get_inverter_realtime_system()
         meter = self._client.get_meter_realtime_system()
 
+        # Discover inverter IDs from PowerFlow and fetch per-device data
+        inverter_ids: list[str] = []
+        if pf:
+            inverter_ids = [
+                str(k) for k, v in (pf.get("Inverters") or {}).items()
+                if isinstance(v, dict)
+            ]
+        inv_devices: dict[str, dict[str, Any]] = {}
+        for dev_id in inverter_ids:
+            dev_data = self._client.get_inverter_realtime_device(int(dev_id))
+            if dev_data:
+                inv_devices[dev_id] = dev_data
+
         with self._lock:
             self._last_scrape_duration_sec = time.perf_counter() - start
             if pf is None:
@@ -69,7 +82,7 @@ class FroniusCollector:
             invs = pf.get("Inverters") or {}
             yield from self._power_flow_families(p, site, invs)
         if inv:
-            yield from self._inverter_realtime_families(p, inv)
+            yield from self._inverter_realtime_families(p, inv, inv_devices)
         if meter:
             yield from self._meter_families(p, meter)
 
@@ -155,11 +168,16 @@ class FroniusCollector:
         yield inv_soc
 
     def _inverter_realtime_families(
-        self, p: str, data: dict[str, Any]
+        self,
+        p: str,
+        data: dict[str, Any],
+        devices: dict[str, dict[str, Any]] | None = None,
     ) -> Iterator[Metric]:
+        devices = devices or {}
+
+        # --- System-scope metrics (PAC, DAY_ENERGY, YEAR_ENERGY, TOTAL_ENERGY) ---
         key_to_metric = [
             ("PAC", p + "inverter_ac_power", "Puissance AC (W)", "device_id"),
-            ("FAC", p + "inverter_ac_frequency_hz", "Fréquence AC (Hz)", "device_id"),
             (
                 "DAY_ENERGY",
                 p + "inverter_energy_day_wh",
@@ -188,17 +206,18 @@ class FroniusCollector:
                 g.add_metric([str(device_id)], safe_float(val))
             yield g
 
+        # --- Device-scope metrics (FAC, IDC, UDC) from per-device calls ---
         # Site-level AC frequency (single gauge, first device value)
-        fac_obj = data.get("FAC")
         ac_freq = GaugeMetricFamily(
             p + "site_realtime_data_ac_frequency",
             "Site real time data AC frequency in Hz",
         )
         fac_val = 0.0
-        if fac_obj and isinstance(fac_obj, dict):
-            values = fac_obj.get("Values") or {}
-            if values:
-                fac_val = safe_float(next(iter(values.values())))
+        for dev_data in devices.values():
+            v = dev_data.get("FAC")
+            if v is not None:
+                fac_val = safe_float(v)
+                break
         ac_freq.add_metric([], fac_val)
         yield ac_freq
 
@@ -212,24 +231,6 @@ class FroniusCollector:
             "Tension DC MPPT (V)",
             labels=["device_id", "mppt"],
         )
-        for key, fam, mppt_label in (
-            ("IDC", idc_fam, "1"),
-            ("UDC", udc_fam, "1"),
-        ):
-            obj = data.get(key)
-            if obj and isinstance(obj, dict):
-                for device_id, val in (obj.get("Values") or {}).items():
-                    fam.add_metric([str(device_id), mppt_label], safe_float(val))
-        for i in range(1, 5):
-            for key, fam in ((f"IDC_{i}", idc_fam), (f"UDC_{i}", udc_fam)):
-                obj = data.get(key)
-                if obj and isinstance(obj, dict):
-                    for device_id, val in (obj.get("Values") or {}).items():
-                        fam.add_metric([str(device_id), str(i)], safe_float(val))
-        yield idc_fam
-        yield udc_fam
-
-        # Old-style MPPT metrics with {inverter, mppt} labels
         mppt_current = GaugeMetricFamily(
             p + "site_mppt_current_dc",
             "Site mppt current DC in A",
@@ -240,23 +241,32 @@ class FroniusCollector:
             "Site mppt voltage in V",
             labels=["inverter", "mppt"],
         )
-        for key, fam, mppt_label in (
-            ("IDC", mppt_current, "1"),
-            ("UDC", mppt_voltage, "1"),
-        ):
-            obj = data.get(key)
-            if obj and isinstance(obj, dict):
-                for device_id, val in (obj.get("Values") or {}).items():
-                    fam.add_metric([str(device_id), mppt_label], safe_float(val))
-        for i in range(1, 5):
-            for key, fam in (
-                (f"IDC_{i}", mppt_current),
-                (f"UDC_{i}", mppt_voltage),
+
+        for dev_id, dev_data in devices.items():
+            # MPPT 1 (IDC / UDC)
+            for key, fam, old_fam in (
+                ("IDC", idc_fam, mppt_current),
+                ("UDC", udc_fam, mppt_voltage),
             ):
-                obj = data.get(key)
-                if obj and isinstance(obj, dict):
-                    for device_id, val in (obj.get("Values") or {}).items():
-                        fam.add_metric([str(device_id), str(i)], safe_float(val))
+                v = dev_data.get(key)
+                if v is not None:
+                    val = safe_float(v)
+                    fam.add_metric([dev_id, "1"], val)
+                    old_fam.add_metric([dev_id, "1"], val)
+            # MPPT 2..4 (IDC_2 / UDC_2, etc.)
+            for i in range(2, 5):
+                for key, fam, old_fam in (
+                    (f"IDC_{i}", idc_fam, mppt_current),
+                    (f"UDC_{i}", udc_fam, mppt_voltage),
+                ):
+                    v = dev_data.get(key)
+                    if v is not None:
+                        val = safe_float(v)
+                        fam.add_metric([dev_id, str(i)], val)
+                        old_fam.add_metric([dev_id, str(i)], val)
+
+        yield idc_fam
+        yield udc_fam
         yield mppt_current
         yield mppt_voltage
 

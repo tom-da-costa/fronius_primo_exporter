@@ -63,6 +63,16 @@ class FroniusClient:
             logger.warning("Inverter realtime (system) unreachable: %s", e)
             return None
 
+    def get_inverter_realtime_device(self, device_id: int) -> dict[str, Any] | None:
+        """GetInverterRealtimeData.cgi?Scope=Device — données par onduleur (IDC, UDC, FAC…)."""
+        try:
+            return self._body_data(
+                f"{BASE_PATH}/GetInverterRealtimeData.cgi?Scope=Device&DeviceId={device_id}"
+            )
+        except FroniusClientError as e:
+            logger.warning("Inverter realtime (device %s) unreachable: %s", device_id, e)
+            return None
+
     def get_meter_realtime_system(self) -> dict[str, Any] | None:
         """GetMeterRealtimeData.cgi?Scope=System — données compteur si présent."""
         try:
