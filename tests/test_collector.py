@@ -114,9 +114,7 @@ def test_inverter_realtime_families():
 
 
 def test_site_ac_frequency_value():
-    collector = _make_collector(
-        inv={"FAC": {"Values": {"1": 49.98}}}
-    )
+    collector = _make_collector(inv={"FAC": {"Values": {"1": 49.98}}})
     metrics = list(collector.collect())
     freq = [m for m in metrics if m.name == "fronius_site_realtime_data_ac_frequency"]
     assert len(freq) == 1
@@ -197,6 +195,5 @@ def test_energy_consumption_values():
 
 
 def test_prefix_without_trailing_underscore():
-    collector = _make_collector(pf=None, inv=None, meter=None)
-    collector2 = FroniusCollector(MagicMock(), prefix="test")
-    assert collector2._prefix == "test_"
+    collector = FroniusCollector(MagicMock(), prefix="test")
+    assert collector._prefix == "test_"
