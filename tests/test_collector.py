@@ -20,7 +20,10 @@ def _make_collector(pf=None, inv=None, meter=None, dev_returns=None, archive=Non
         )
     else:
         client.get_inverter_realtime_device.return_value = None
-    return FroniusCollector(client, prefix="fronius_")
+    collector = FroniusCollector(client, prefix="fronius_")
+    # Pre-populate archive cache (fetched in background in production)
+    collector._archive_cache = archive
+    return collector
 
 
 def _collect_names(collector):

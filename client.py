@@ -27,10 +27,10 @@ class FroniusClient:
         self.timeout = timeout
         self._session = requests.Session()
 
-    def _get(self, path: str) -> dict[str, Any]:
+    def _get(self, path: str, timeout: float | None = None) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            r = self._session.get(url, timeout=self.timeout)
+            r = self._session.get(url, timeout=timeout or self.timeout)
             r.raise_for_status()
             return r.json()
         except requests.RequestException as e:
@@ -38,8 +38,8 @@ class FroniusClient:
         except ValueError as e:
             raise FroniusClientError(f"Invalid JSON: {e}") from e
 
-    def _body_data(self, path: str) -> dict[str, Any]:
-        data = self._get(path)
+    def _body_data(self, path: str, timeout: float | None = None) -> dict[str, Any]:
+        data = self._get(path, timeout=timeout)
         head = data.get("Head", {})
         if head.get("Status", {}).get("Code", 0) != 0:
             reason = head.get("Status", {}).get("Reason", "Unknown")
@@ -95,7 +95,8 @@ class FroniusClient:
                 f"&Channel=Current_DC_String_2"
                 f"&HumanReadable=false"
                 f"&StartDate={start}"
-                f"&EndDate={end}"
+                f"&EndDate={end}",
+                timeout=30.0,
             )
         except FroniusClientError as e:
             logger.warning("Archive data unreachable: %s", e)

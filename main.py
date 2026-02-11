@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LISTEN_ADDR = "0.0.0.0"
 DEFAULT_METRICS_PORT = 9687
-DEFAULT_TIMEOUT = 10.0
+DEFAULT_TIMEOUT = 20.0
 
 
 def parse_args(args=None) -> argparse.Namespace:

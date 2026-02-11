@@ -26,27 +26,33 @@ logger = logging.getLogger(__name__)
 class FroniusCollector:
     """Collecteur custom : appelle l'API Fronius à chaque collect() et yield les métriques."""
 
+    _ARCHIVE_TTL = 300  # refresh archive every 5 minutes
+
     def __init__(self, client: FroniusClient, prefix: str = "fronius_") -> None:
         self._client = client
         self._prefix = prefix if prefix.endswith("_") else prefix + "_"
         self._lock = threading.Lock()
         self._scrape_errors = 0
         self._last_scrape_duration_sec = 0.0
+        self._archive_cache: dict[str, Any] | None = None
+        self._archive_refreshing = False
 
     def collect(self) -> Iterator[Metric]:
         with self._lock:
             start = time.perf_counter()
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             f_pf = pool.submit(self._client.get_power_flow)
             f_inv = pool.submit(self._client.get_inverter_realtime_system)
             f_meter = pool.submit(self._client.get_meter_realtime_system)
-            f_archive = pool.submit(self._client.get_archive_data)
 
         pf = f_pf.result()
         inv = f_inv.result()
         meter = f_meter.result()
-        archive = f_archive.result()
+
+        # Archive: refresh in background, use cached data for scrape
+        self._maybe_refresh_archive()
+        archive = self._archive_cache
 
         # Discover inverter IDs from PowerFlow and fetch per-device data
         inverter_ids: list[str] = []
@@ -96,6 +102,25 @@ class FroniusCollector:
             yield from self._archive_families(p, archive)
         if meter:
             yield from self._meter_families(p, meter)
+
+    def _maybe_refresh_archive(self) -> None:
+        """Trigger a background archive refresh if the cache is stale."""
+        with self._lock:
+            if self._archive_refreshing:
+                return
+            self._archive_refreshing = True
+
+        def _fetch() -> None:
+            try:
+                data = self._client.get_archive_data()
+                with self._lock:
+                    if data is not None:
+                        self._archive_cache = data
+            finally:
+                with self._lock:
+                    self._archive_refreshing = False
+
+        threading.Thread(target=_fetch, daemon=True).start()
 
     def _power_flow_families(
         self, p: str, site: dict[str, Any], inverters: dict[str, Any]
