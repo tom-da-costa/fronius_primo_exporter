@@ -8,6 +8,7 @@ les données en métriques (power flow, inverter realtime, meter si présent).
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterator
 
 from prometheus_client.core import (
@@ -36,10 +37,16 @@ class FroniusCollector:
         with self._lock:
             start = time.perf_counter()
 
-        pf = self._client.get_power_flow()
-        inv = self._client.get_inverter_realtime_system()
-        meter = self._client.get_meter_realtime_system()
-        archive = self._client.get_archive_data()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            f_pf = pool.submit(self._client.get_power_flow)
+            f_inv = pool.submit(self._client.get_inverter_realtime_system)
+            f_meter = pool.submit(self._client.get_meter_realtime_system)
+            f_archive = pool.submit(self._client.get_archive_data)
+
+        pf = f_pf.result()
+        inv = f_inv.result()
+        meter = f_meter.result()
+        archive = f_archive.result()
 
         # Discover inverter IDs from PowerFlow and fetch per-device data
         inverter_ids: list[str] = []
