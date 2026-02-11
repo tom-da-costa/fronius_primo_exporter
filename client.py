@@ -83,9 +83,9 @@ class FroniusClient:
         now = datetime.now(tz=timezone.utc)
         # Round down to 5-minute boundary
         truncated = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
-        start = truncated.strftime("%Y-%m-%dT%H:%M:%S%z")
+        start = truncated.isoformat()
         end_dt = truncated.replace(minute=truncated.minute + 5)
-        end = end_dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+        end = end_dt.isoformat()
         try:
             return self._body_data(
                 f"{BASE_PATH}/GetArchiveData.cgi?Scope=System"
