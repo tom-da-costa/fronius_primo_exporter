@@ -1,6 +1,6 @@
 [project]
 name = "fronius-primo-exporter"
-version = "0.0.1"
+version = "0.1.0"
 description = "Prometheus exporter for Fronius solar inverters (Primo / Solar API)"
 readme = "README.md"
 requires-python = ">=3.12"
